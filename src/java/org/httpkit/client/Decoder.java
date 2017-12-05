@@ -3,6 +3,9 @@ package org.httpkit.client;
 import org.httpkit.*;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -28,6 +31,8 @@ public class Decoder {
     private final HttpMethod method;
 
     private boolean emptyBodyExpected = false;
+
+    private List<ByteBuffer> responseBytes = new ArrayList<ByteBuffer>();
 
     public Decoder(IRespListener listener, HttpMethod method) {
         this.listener = listener;
@@ -80,6 +85,7 @@ public class Decoder {
 
     public State decode(ByteBuffer buffer) throws LineTooLargeException, ProtocolException,
             AbortException {
+        responseBytes.add(buffer.duplicate());
         String line;
         while (buffer.hasRemaining() && state != State.ALL_READ) {
             switch (state) {
@@ -178,5 +184,14 @@ public class Decoder {
                 readRemaining = Integer.MAX_VALUE;
             }
         }
+    }
+
+    public String getResponse() {
+        StringBuilder sb = new StringBuilder();
+        Charset charset = Charset.forName("ISO-8859-1");
+        for (ByteBuffer bb : responseBytes) {
+            sb.append(charset.decode(bb));
+        }
+        return sb.toString();
     }
 }

@@ -61,7 +61,7 @@ public class TextClientTest {
                 }
             };
             client.exec(url, new RequestConfig(), null, new RespListener(handler,
-                    IFilter.ACCEPT_ALL, pool, 1));
+                    IFilter.ACCEPT_ALL, pool, 1), null);
         }
 
         latch.await();

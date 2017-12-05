@@ -62,7 +62,7 @@ public class HttpsClientTest {
                     logger.error("error", t);
                     cd.countDown();
                 }
-            }, IFilter.ACCEPT_ALL, pool, 1));
+            }, IFilter.ACCEPT_ALL, pool, 1), null);
             cd.await();
         }
     }

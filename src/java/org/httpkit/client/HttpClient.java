@@ -17,6 +17,7 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.security.NoSuchAlgorithmException;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -197,11 +198,15 @@ public class HttpClient implements Runnable {
             req.onProgress(now);
             buffer.flip();
             try {
+                State oldState = req.decoder.state;
                 if (req.decoder.decode(buffer) == ALL_READ) {
                     req.finish();
                     if (req.cfg.keepAlive > 0) {
                         PersistentConn con = new PersistentConn(now + req.cfg.keepAlive, req.addr, key);
-                        eventLogger.log(req.logMDC, req.getLogContext(), "Request finished reading and returns connection to keepalives.");
+                        Map<String, String> context = req.getLogContext();
+                        if (oldState == ALL_READ)
+                            context.put("response", req.decoder.getResponse());
+                        eventLogger.log(req.logMDC, context, "Request finished reading and returns connection to keepalives.");
                         keepalives.offer(con);
                     } else {
                         closeQuietly(key);
@@ -406,7 +411,9 @@ public class HttpClient implements Runnable {
                 if (con != null) { // keep alive
                     SelectionKey key = con.key;
                     if (key.isValid()) {
-                        eventLogger.log(job.logMDC, job.getLogContext(), "Request is reusing channel");
+                        Map<String, String> context = job.getLogContext();
+                        context.put("conn", String.valueOf(con));
+                        eventLogger.log(job.logMDC, context, "Request is reusing channel");
                         job.isReuseConn = true;
                         // reuse key, engine
                         try {
