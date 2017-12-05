@@ -32,7 +32,7 @@ public class Decoder {
 
     private boolean emptyBodyExpected = false;
 
-    private List<ByteBuffer> responseBytes = new ArrayList<ByteBuffer>();
+    private List<StringBuilder> responseBytes = new ArrayList<StringBuilder>();
 
     public Decoder(IRespListener listener, HttpMethod method) {
         this.listener = listener;
@@ -85,7 +85,8 @@ public class Decoder {
 
     public State decode(ByteBuffer buffer) throws LineTooLargeException, ProtocolException,
             AbortException {
-        responseBytes.add(buffer.duplicate());
+        responseBytes.add(new StringBuilder(Charset.forName("UTF-8").decode(buffer.duplicate())));
+
         String line;
         while (buffer.hasRemaining() && state != State.ALL_READ) {
             switch (state) {
@@ -186,12 +187,7 @@ public class Decoder {
         }
     }
 
-    public String getResponse() {
-        StringBuilder sb = new StringBuilder();
-        Charset charset = Charset.forName("ISO-8859-1");
-        for (ByteBuffer bb : responseBytes) {
-            sb.append(charset.decode(bb));
-        }
-        return sb.toString();
+    public List<StringBuilder> getResponse() {
+        return responseBytes;
     }
 }
