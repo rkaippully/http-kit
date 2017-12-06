@@ -17,6 +17,7 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.security.NoSuchAlgorithmException;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -197,10 +198,16 @@ public class HttpClient implements Runnable {
             req.onProgress(now);
             buffer.flip();
             try {
+                State oldState = req.decoder.state;
                 if (req.decoder.decode(buffer) == ALL_READ) {
                     req.finish();
                     if (req.cfg.keepAlive > 0) {
-                        keepalives.offer(new PersistentConn(now + req.cfg.keepAlive, req.addr, key));
+                        PersistentConn con = new PersistentConn(now + req.cfg.keepAlive, req.addr, key);
+                        Map<String, String> context = req.getLogContext();
+                        if (oldState == ALL_READ)
+                            context.put("response", req.decoder.getResponse().toString());
+                        eventLogger.log(req.logMDC, context, "Request finished reading and returns connection to keepalives.");
+                        keepalives.offer(con);
                     } else {
                         closeQuietly(key);
                     }
@@ -209,10 +216,10 @@ public class HttpClient implements Runnable {
                 closeQuietly(key);
                 req.finish(e);
             } catch (Exception e) {
+                errorLogger.log(req.logMDC, req.getLogContext(), "should not happen", e); // decoding
+                eventLogger.log(req.logMDC, req.getLogContext(), eventNames.clientImpossible);
                 closeQuietly(key);
                 req.finish(e);
-                errorLogger.log("should not happen", e); // decoding
-                eventLogger.log(eventNames.clientImpossible);
             }
         }
     }
@@ -260,7 +267,7 @@ public class HttpClient implements Runnable {
 
 
 
-    public void exec(String url, RequestConfig cfg, SSLEngine engine, IRespListener cb) {
+    public void exec(String url, RequestConfig cfg, SSLEngine engine, IRespListener cb, Object logMDC) {
         URI uri,proxyUri = null;
         try {
             uri = new URI(url);
@@ -347,9 +354,9 @@ public class HttpClient implements Runnable {
             // configure SSLEngine with URI
             sslEngineUriConfigurer.configure(engine, uri);
 
-            pending.offer(new HttpsRequest(addr, request, cb, requests, cfg, engine));
+            pending.offer(new HttpsRequest(addr, request, cb, requests, cfg, engine, eventLogger, logMDC));
         } else {
-            pending.offer(new Request(addr, request, cb, requests, cfg));
+            pending.offer(new Request(addr, request, cb, requests, cfg, eventLogger, logMDC));
         }
 
 //        pending.offer(new Request(addr, request, cb, requests, cfg));
@@ -404,6 +411,9 @@ public class HttpClient implements Runnable {
                 if (con != null) { // keep alive
                     SelectionKey key = con.key;
                     if (key.isValid()) {
+                        Map<String, String> context = job.getLogContext();
+                        context.put("conn", String.valueOf(con));
+                        eventLogger.log(job.logMDC, context, "Request is reusing channel");
                         job.isReuseConn = true;
                         // reuse key, engine
                         try {
@@ -418,6 +428,7 @@ public class HttpClient implements Runnable {
                         }
                     } else {
                         // this should not happen often
+                        eventLogger.log(job.logMDC, job.getLogContext(), "Request found a keepalive channel with invalid key " + key);
                         closeQuietly(key);
                     }
                 }
@@ -434,6 +445,7 @@ public class HttpClient implements Runnable {
                     numConnections++;
                     // if connection is established immediatelly, should wait for write. Fix #98
                     job.key = ch.register(selector, connected ? OP_WRITE : OP_CONNECT, job);
+                    eventLogger.log(job.logMDC, job.getLogContext(), "Created new channel: connected = " + connected);
                     // save key for timeout check
                     requests.offer(job);
                 } catch (IOException e) {
