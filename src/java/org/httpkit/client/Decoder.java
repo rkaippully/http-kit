@@ -116,12 +116,10 @@ public class Decoder {
                     readBody(buffer, READ_CHUNK_DELIMITER);
                     break;
                 case READ_CHUNK_FOOTER:
-                    readEmptyLine(buffer);
-                    state = ALL_READ;
+                    readEmptyLine(buffer, ALL_READ);
                     break;
                 case READ_CHUNK_DELIMITER:
-                    readEmptyLine(buffer);
-                    state = READ_CHUNK_SIZE;
+                    readEmptyLine(buffer, READ_CHUNK_SIZE);
                     break;
                 case READ_VARIABLE_LENGTH_CONTENT:
                     readBody(buffer, null);
@@ -144,10 +142,21 @@ public class Decoder {
         }
     }
 
-    void readEmptyLine(ByteBuffer buffer) {
-        byte b = buffer.get();
-        if (b == CR && buffer.hasRemaining()) {
-            buffer.get(); // should be LF
+    private void readEmptyLine(ByteBuffer buffer, State nextState) throws ProtocolException {
+        boolean more = true;
+        while (buffer.hasRemaining() && more) {
+            byte b = buffer.get();
+            if (b == CR) {
+                if (buffer.hasRemaining() && buffer.get() == LF) {
+                    state = nextState;
+                    more = false;
+                }
+            } else if (b == LF) {
+                state = nextState;
+                more = false;
+            } else {
+                throw new ProtocolException("Expected CR or LF character. Got " + (int)b);
+            }
         }
     }
 
