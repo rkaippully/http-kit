@@ -202,12 +202,15 @@ public class HttpClient implements Runnable {
                 if (req.decoder.decode(buffer) == ALL_READ) {
                     req.finish();
                     if (req.cfg.keepAlive > 0) {
-                        PersistentConn con = new PersistentConn(now + req.cfg.keepAlive, req.addr, key);
                         Map<String, String> context = req.getLogContext();
-                        if (oldState == ALL_READ)
+                        if (oldState == ALL_READ) {
                             context.put("response", req.decoder.getResponse().toString());
-                        eventLogger.log(req.logMDC, context, "Request finished reading and returns connection to keepalives.");
-                        keepalives.offer(con);
+                            eventLogger.log(req.logMDC, context, "Bug! Attempt to return connection to keepalives more than once.");
+                        } else {
+                            eventLogger.log(req.logMDC, context, "Request finished reading and returns connection to keepalives.");
+                            PersistentConn con = new PersistentConn(now + req.cfg.keepAlive, req.addr, key);
+                            keepalives.offer(con);
+                        }
                     } else {
                         closeQuietly(key);
                     }
