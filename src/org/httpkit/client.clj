@@ -1,6 +1,7 @@
 (ns org.httpkit.client
   (:refer-clojure :exclude [get proxy])
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [org.httpkit.encode :refer [base64-encode]])
   (:use [clojure.walk :only [prewalk]])
   (:import [org.httpkit.client HttpClient HttpClient$AddressFinder HttpClient$SSLEngineURIConfigurer
             IResponseHandler RespListener IFilter RequestConfig]
@@ -8,14 +9,12 @@
            [org.httpkit HttpMethod PrefixThreadFactory HttpUtils]
            [java.util.concurrent ThreadPoolExecutor LinkedBlockingQueue TimeUnit]
            [java.net URI URLEncoder]
-           [org.httpkit.client SslContextFactory MultipartEntity]
-           javax.xml.bind.DatatypeConverter))
+           [org.httpkit.client SslContextFactory MultipartEntity]))
 
 ;;;; Utils
 
 (defn- utf8-bytes    [s]     (.getBytes         (str s) "utf8"))
 (defn url-encode     [s]     (URLEncoder/encode (str s) "utf8"))
-(defn- base64-encode [bytes] (DatatypeConverter/printBase64Binary bytes))
 
 (defn- basic-auth-value [basic-auth]
   (let [basic-auth (if (string? basic-auth)
@@ -138,6 +137,18 @@
                                   (format "Invalid event-names: (%s) %s"
                                     (class event-names) (pr-str event-names)))))))
 
+(def ^:dynamic ^:private *in-callback* false)
+
+(defn ^:private deadlock-guard [response]
+  (let [e #(Exception. "http-kit client deadlock-guard: refusing to deref a request callback from inside a callback. This feature can be disabled with the request's `:deadlock-guard?` option.")]
+    (reify
+      clojure.lang.IPending
+      (isRealized [_] (realized? response))
+      clojure.lang.IDeref
+      (deref [_] (if *in-callback* (throw (e)) (deref response)))
+      clojure.lang.IBlockingDeref
+      (deref [_ ms value] (if *in-callback* (throw (e)) (deref response ms value))))))
+
 (defn request
   "Issues an async HTTP request and returns a promise object to which the value
   of `(callback {:opts _ :status _ :headers _ :body _})` or
@@ -181,7 +192,7 @@
     :as :form-params :client :body :basic-auth :user-agent :filter :worker-pool"
   [{:keys [client timeout connect-timeout idle-timeout filter worker-pool keepalive as follow-redirects
            max-redirects response trace-redirects allow-unsafe-redirect-methods proxy-host proxy-port
-           proxy-url tunnel?]
+           proxy-url tunnel? deadlock-guard?]
     :as opts
     :or {connect-timeout 60000
          idle-timeout 60000
@@ -193,6 +204,7 @@
          keepalive 120000
          as :auto
          tunnel? false
+         deadlock-guard? true
          proxy-host nil
          proxy-port -1
          proxy-url nil}}
@@ -200,12 +212,14 @@
   (let [client (or client @default-client)
         {:keys [url method headers body sslengine]} (coerce-req opts)
         deliver-resp #(deliver response ;; deliver the result
-                               (try ((or callback identity) %1)
-                                    (catch Throwable e
-                                      ;; dump stacktrace to stderr
-                                      (HttpUtils/printError (str method " " url "'s callback") e)
-                                      ;; return the error
-                                      {:opts opts :error e})))
+                               (try
+                                 (binding [*in-callback* true]
+                                   ((or callback identity) %1))
+                                 (catch Throwable e
+                                   ;; dump stacktrace to stderr
+                                   (HttpUtils/printError (str method " " url "'s callback") e)
+                                   ;; return the error
+                                   {:opts opts :error e})))
         handler (reify IResponseHandler
                   (onSuccess [this status headers body]
                     (if (and follow-redirects
@@ -242,7 +256,9 @@
         cfg (RequestConfig. method headers body connect-timeout idle-timeout
               keepalive effective-proxy-url tunnel?)]
     (.exec ^HttpClient client url cfg sslengine listener)
-    response))
+    (if deadlock-guard?
+      (deadlock-guard response)
+      response)))
 
 (defmacro ^:private defreq [method]
   `(defn ~method

@@ -1,7 +1,7 @@
 (ns org.httpkit.server
+  (:require [org.httpkit.encode :refer [base64-encode]])
   (:import [org.httpkit.server AsyncChannel HttpServer RingHandler ProxyProtocolOption]
            [org.httpkit.logger ContextLogger EventLogger EventNames]
-           javax.xml.bind.DatatypeConverter
            java.security.MessageDigest))
 
 ;;;; Ring server
@@ -122,6 +122,9 @@
     messages. Message ordering is guaranteed by server.
 
     The message argument could be a string or a byte[].")
+  (on-ping [ch callback]
+    "Sets handler (fn [data]) for notification of client WebSocket pings. The
+    data param represents application data and will by a byte[].")
   (on-close [ch callback]
     "Sets handler (fn [status]) for notification of channel being closed by the
     server or client. Handler will be invoked at most once. Useful for clean-up.
@@ -144,6 +147,7 @@
     ([ch data] (.send ch data (not (websocket? ch))))
     ([ch data close-after-send?] (.send ch data (boolean close-after-send?))))
   (on-receive [ch callback] (.setReceiveHandler ch callback))
+  (on-ping [ch callback] (.setPingHandler ch callback))
   (on-close [ch callback] (.setCloseHandler ch callback)))
 
 ;;;; WebSocket
@@ -151,8 +155,8 @@
 (defn sec-websocket-accept [sec-websocket-key]
   (let [md (MessageDigest/getInstance "SHA1")
         websocket-13-guid "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"]
-    (DatatypeConverter/printBase64Binary
-      (.digest md (.getBytes (str sec-websocket-key websocket-13-guid))))))
+    (base64-encode
+     (.digest md (.getBytes (str sec-websocket-key websocket-13-guid))))))
 
 (def accept "DEPRECATED for `sec-websocket-accept" sec-websocket-accept)
 
